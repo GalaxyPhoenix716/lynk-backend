@@ -1,1 +1,174 @@
-# Transfer service placeholder
+import secrets
+from datetime import datetime, timedelta, timezone
+from app.core.config import settings
+from app.core.exceptions import (
+    LimitExceededException,
+    TransferNotFoundException,
+    TransferNotReadyException,
+    InvalidInputException,
+)
+from app.models.transfer import TransferModel, FileItemModel
+from app.services.redis_service import RedisService
+from app.services.r2_service import R2Service
+
+class TransferService:
+    def __init__(self, redis_service: RedisService, r2_service: R2Service) -> None:
+        self.redis = redis_service
+        self.r2 = r2_service
+
+    def _generate_id(self, length: int) -> str:
+        return secrets.token_urlsafe(length)[:length]
+
+    async def create_transfer(self, files_input: list[dict]) -> dict:
+        if len(files_input) > settings.MAX_FILES_PER_TRANSFER:
+            raise LimitExceededException("Maximum file count limit exceeded")
+
+        total_size = 0
+        file_models = []
+        transfer_id = self._generate_id(12)
+
+        for f in files_input:
+            size = f["file_size"]
+            if size > settings.MAX_INDIVIDUAL_FILE_SIZE:
+                raise LimitExceededException(f"File '{f['file_name']}' exceeds individual size limit")
+            total_size += size
+
+            file_id = self._generate_id(8)
+            file_models.append(FileItemModel(
+                file_id=file_id,
+                file_name=f["file_name"],
+                file_size=size,
+                content_type=f["content_type"],
+                status="pending"
+            ))
+
+        if total_size > settings.MAX_TOTAL_TRANSFER_SIZE:
+            raise LimitExceededException("Total transfer size limit exceeded")
+
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=settings.TRANSFER_LIFETIME_SECONDS)
+
+        transfer = TransferModel(
+            transfer_id=transfer_id,
+            status="uploading",
+            created_at=now.isoformat(),
+            expires_at=expires_at.isoformat(),
+            total_files=len(file_models),
+            total_size=total_size,
+            files=file_models
+        )
+
+        await self.redis.set_transfer(
+            transfer_id,
+            transfer.model_dump(),
+            settings.TRANSFER_LIFETIME_SECONDS
+        )
+
+        upload_files = []
+        for f in file_models:
+            url = await self.r2.generate_upload_url(transfer_id, f.file_id, f.content_type)
+            upload_files.append({
+                "file_id": f.file_id,
+                "file_name": f.file_name,
+                "upload_url": url
+            })
+
+        return {
+            "transfer_id": transfer_id,
+            "status": "uploading",
+            "expires_in": settings.TRANSFER_LIFETIME_SECONDS,
+            "files": upload_files
+        }
+
+    async def complete_file(self, transfer_id: str, file_id: str) -> dict:
+        data = await self.redis.get_transfer(transfer_id)
+        if not data:
+            raise TransferNotFoundException()
+
+        transfer = TransferModel.model_validate(data)
+        target_file = next((f for f in transfer.files if f.file_id == file_id), None)
+        if not target_file:
+            raise InvalidInputException("File not found in transfer")
+
+        try:
+            actual_size = await self.r2.verify_file_exists(transfer_id, file_id)
+            target_file.status = "uploaded"
+        except FileNotFoundError:
+            target_file.status = "failed"
+            raise InvalidInputException("File has not been uploaded to storage")
+
+        if all(f.status == "uploaded" for f in transfer.files):
+            transfer.status = "ready"
+
+        await self.redis.update_transfer(transfer_id, transfer.model_dump())
+
+        return {
+            "file_id": file_id,
+            "status": target_file.status,
+            "transfer_status": transfer.status
+        }
+
+    async def get_transfer_metadata(self, transfer_id: str) -> dict:
+        data = await self.redis.get_transfer(transfer_id)
+        if not data:
+            raise TransferNotFoundException()
+
+        transfer = TransferModel.model_validate(data)
+        
+        client = await self.redis.get_client()
+        key = self.redis._get_key(transfer_id)
+        ttl = await client.ttl(key)
+        expires_in = max(0, ttl) if ttl != -2 else 0
+
+        return {
+            "transfer_id": transfer.transfer_id,
+            "status": transfer.status,
+            "total_files": transfer.total_files,
+            "total_size": transfer.total_size,
+            "expires_in": expires_in,
+            "files": [
+                {
+                    "file_id": f.file_id,
+                    "file_name": f.file_name,
+                    "file_size": f.file_size,
+                    "content_type": f.content_type
+                } for f in transfer.files
+            ]
+        }
+
+    async def get_download_urls(self, transfer_id: str, file_ids: list[str] | None = None) -> dict:
+        data = await self.redis.get_transfer(transfer_id)
+        if not data:
+            raise TransferNotFoundException()
+
+        transfer = TransferModel.model_validate(data)
+        if transfer.status != "ready":
+            raise TransferNotReadyException()
+
+        targets = file_ids if file_ids is not None else [f.file_id for f in transfer.files]
+        download_files = []
+
+        for f in transfer.files:
+            if f.file_id in targets:
+                if f.status != "uploaded":
+                    continue
+                url = await self.r2.generate_download_url(transfer_id, f.file_id, f.file_name)
+                download_files.append({
+                    "file_id": f.file_id,
+                    "file_name": f.file_name,
+                    "download_url": url,
+                    "expires_in": settings.DOWNLOAD_URL_LIFETIME_SECONDS
+                })
+
+        return {"files": download_files}
+
+    async def cancel_transfer(self, transfer_id: str) -> None:
+        data = await self.redis.get_transfer(transfer_id)
+        if not data:
+            return
+
+        transfer = TransferModel.model_validate(data)
+        await self.redis.delete_transfer(transfer_id)
+        
+        file_ids = [f.file_id for f in transfer.files]
+        await self.r2.delete_objects(transfer_id, file_ids)
