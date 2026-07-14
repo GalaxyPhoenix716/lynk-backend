@@ -1,0 +1,106 @@
+# Lynk — Cross-Device File Transfer API (Backend)
+
+<p align="center">
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Python_3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Redis" />
+  <img src="https://img.shields.io/badge/Cloudflare_R2-F38020?style=for-the-badge&logo=cloudflare&logoColor=white" alt="R2" />
+</p>
+
+This is the FastAPI backend service for **Lynk**, a minimal, login-free, cross-device file transfer app.
+
+The service coordinates the transfer of files by generating short-lived, presigned upload/download URLs directly to Cloudflare R2 and storing transfer session metadata in Redis. No file bytes are proxied through this server, ensuring high throughput and minimal memory overhead.
+
+---
+
+## Architecture & Core Features
+
+* **Lifespan Pool Management**: Uses FastAPI's modern `@asynccontextmanager` lifespan handlers to manage connection pools for Redis cleanly.
+* **Non-Blocking I/O**: Offloads synchronous S3 `boto3` calls (used for R2 bucket interactions) to background worker threads using `anyio.to_thread.run_sync`.
+* **Zero-Knowledge Pathing**: Generates random UUID/cryptographic identifiers for files and transfers. Files are saved in private R2 folders without exposing original names.
+* **RFC 5987 Header Sanitation**: Filenames are URL-encoded before generation of download URLs, ensuring emojis and non-ASCII character sets work seamlessly without header injection vulnerabilities.
+* **TTL Preservation Rules**: Redis updates are executed dynamically, retrieving and preserving the remaining seconds of a session's lifetime to prevent lifetime extensions.
+
+---
+
+## API Endpoints
+
+### File Transfers (`/api/v1/transfers`)
+* **`POST /transfers`**: Initiates a transfer session, checks file limits, and returns presigned upload URLs.
+* **`POST /transfers/{transfer_id}/files/{file_id}/complete`**: Confirms that a file has been successfully uploaded to Cloudflare R2 and updates status.
+* **`GET /transfers/{transfer_id}`**: Retrieves transfer metadata (file list, sizes, status, and time-to-live).
+* **`POST /transfers/{transfer_id}/downloads`**: Generates presigned download URLs for the files.
+* **`DELETE /transfers/{transfer_id}`**: Cancels the transfer and removes files from storage immediately.
+
+### Receiver Sessions (`/api/v1/receiver-sessions`)
+* **`POST /receiver-sessions`**: Creates a temporary receiver session (status `"waiting"`) and returns a session ID.
+* **`GET /receiver-sessions/{session_id}`**: Polls for session changes (tracks if a transfer has been attached).
+* **`POST /receiver-sessions/{session_id}/attach-transfer`**: Attaches a transfer ID to a receiver session (triggers status change to `"attached"`).
+* **`DELETE /receiver-sessions/{session_id}`**: Cancels and removes a receiver session.
+
+---
+
+## Development Setup
+
+### Prerequisites
+* Python 3.10+
+* Redis Server (running locally on port `6379`)
+
+### Installation
+1. Navigate to the backend directory:
+   ```bash
+   cd backend
+   ```
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv .venv
+   # Windows Command Prompt:
+   .venv\Scripts\activate
+   # Windows PowerShell:
+   .venv\Scripts\Activate.ps1
+   ```
+3. Install all dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+### Local Environment Config
+Create a `.env` file in the root of the `backend` folder:
+```env
+ENVIRONMENT=development
+PORT=8000
+HOST=0.0.0.0
+REDIS_URL=redis://localhost:6379/0
+
+# Optional: Add your actual R2 settings here for real uploads.
+# Leaving them blank defaults to local mock configurations.
+R2_ACCOUNT_ID=your-cloudflare-account-id
+R2_ACCESS_KEY_ID=your-access-key-id
+R2_SECRET_ACCESS_KEY=your-secret-access-key
+R2_BUCKET_NAME=your-bucket-name
+```
+
+---
+
+## Running & Testing
+
+* **Start the Server (Reload Mode)**:
+  ```bash
+  uvicorn app.main:app --reload
+  ```
+  Explore the interactive API docs at **`http://localhost:8000/docs`**.
+
+* **Run the Unit Test Suite**:
+  ```bash
+  .venv\Scripts\python -m pytest
+  ```
+  Runs the full suite of 17 tests testing limits, endpoints, completion status, and session allocations.
+
+---
+
+## Production & Cloud Deployment Notes
+
+When deploying to environments like **Oracle Cloud (OCI)**:
+1. **Network Configuration**: Ensure an Ingress Security Rule is added in your OCI console to permit TCP traffic on the port your API is exposed (default `8000`), and save local OS firewall rules (`iptables` / `firewalld`).
+2. **Process Management**: Run the app as a background service using **systemd** (`systemctl`) or containerize it via **Docker** to ensure persistent operation and crash recovery.
+3. **SSL Reverse Proxy**: Use **Caddy** or **Nginx** in front of the Uvicorn server to automatically provision and manage Let's Encrypt SSL certificates.
