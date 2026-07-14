@@ -7,6 +7,10 @@ class LynkException(Exception):
         self.status_code = status_code
         super().__init__(self.message)
         
+class InvalidInputException(LynkException):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=400)
+        
 class TransferNotFoundException(LynkException):
     def __init__(self, message: str = "Transfer not found or expired"):
         super().__init__(message, status_code=404)

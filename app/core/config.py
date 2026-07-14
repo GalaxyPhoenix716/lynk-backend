@@ -8,10 +8,10 @@ class Settings(BaseSettings):
 
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    R2_ACCOUNT_ID: str
-    R2_ACCESS_KEY_ID: str
-    R2_SECRET_ACCESS_KEY: str
-    R2_BUCKET_NAME: str
+    R2_ACCOUNT_ID: str = "mock-account-id"
+    R2_ACCESS_KEY_ID: str = "mock-access-key"
+    R2_SECRET_ACCESS_KEY: str = "mock-secret-key"
+    R2_BUCKET_NAME: str = "lynk-transfers"
 
     MAX_FILES_PER_TRANSFER: int = 10
     MAX_INDIVIDUAL_FILE_SIZE: int = 52428800
