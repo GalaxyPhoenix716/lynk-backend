@@ -89,7 +89,6 @@ class RedisService:
             raise ServiceUnavailableException("Failed to update transfer metadata")
 
     async def delete_transfer(self, transfer_id: str) -> None:
-        """Deletes a transfer's metadata immediately."""
         client = await self.get_client()
         key = self._get_key(transfer_id)
         try:
@@ -98,12 +97,65 @@ class RedisService:
             logger.error(f"Redis delete_transfer failed: {e}")
             raise ServiceUnavailableException("Failed to delete transfer metadata")
 
+    def _get_receiver_key(self, session_id: str) -> str:
+        return f"lynk:receiver:{session_id}"
+
+    async def set_receiver_session(self, session_id: str, data: dict, ttl_seconds: int) -> None:
+        client = await self.get_client()
+        key = self._get_receiver_key(session_id)
+        try:
+            val = json.dumps(data)
+            await client.setex(key, ttl_seconds, val)
+        except Exception as e:
+            logger.error(f"Redis set_receiver_session failed: {e}")
+            raise ServiceUnavailableException("Failed to save receiver session")
+
+    async def get_receiver_session(self, session_id: str) -> dict | None:
+        client = await self.get_client()
+        key = self._get_receiver_key(session_id)
+        try:
+            val = await client.get(key)
+            if not val:
+                return None
+            return json.loads(val)
+        except Exception as e:
+            logger.error(f"Redis get_receiver_session failed: {e}")
+            raise ServiceUnavailableException("Failed to retrieve receiver session")
+
+    async def update_receiver_session(self, session_id: str, data: dict) -> None:
+        client = await self.get_client()
+        key = self._get_receiver_key(session_id)
+        try:
+            ttl = await client.ttl(key)
+            if ttl == -2:
+                raise TransferNotFoundException("Receiver session not found or expired")
+            if ttl <= 0:
+                if ttl == -1:
+                    ttl = settings.RECEIVER_SESSION_LIFETIME_SECONDS
+                else:
+                    raise TransferNotFoundException("Receiver session not found or expired")
+
+            val = json.dumps(data)
+            await client.setex(key, ttl, val)
+        except TransferNotFoundException:
+            raise
+        except Exception as e:
+            logger.error(f"Redis update_receiver_session failed: {e}")
+            raise ServiceUnavailableException("Failed to update receiver session")
+
+    async def delete_receiver_session(self, session_id: str) -> None:
+        client = await self.get_client()
+        key = self._get_receiver_key(session_id)
+        try:
+            await client.delete(key)
+        except Exception as e:
+            logger.error(f"Redis delete_receiver_session failed: {e}")
+            raise ServiceUnavailableException("Failed to delete receiver session")
+
     async def close_pool(self) -> None:
-        """Closes the connection pool. Called during app shutdown."""
         if self.pool:
             await self.pool.disconnect()
             logger.info("Redis connection pool closed.")
             self.pool = None
 
-# Global service instance to import throughout the app
 redis_service = RedisService()
