@@ -19,6 +19,8 @@ The service coordinates the transfer of files by generating short-lived, presign
 * **Non-Blocking I/O**: Offloads synchronous S3 `boto3` calls (used for R2 bucket interactions) to background worker threads using `anyio.to_thread.run_sync`.
 * **Zero-Knowledge Pathing**: Generates random UUID/cryptographic identifiers for files and transfers. Files are saved in private R2 folders without exposing original names.
 * **RFC 5987 Header Sanitation**: Filenames are URL-encoded before generation of download URLs, ensuring emojis and non-ASCII character sets work seamlessly without header injection vulnerabilities.
+* **IP-Based Rate Limiting**: Enforces request limits (5 requests per 60s) using a custom Redis-based FastAPI dependency to protect write endpoints from bot abuse.
+* **R2 Storage Cap Guard**: Employs a self-cleaning Redis Sorted Set (ZSET) to track total active file storage size in real-time, blocking new uploads if the active data would exceed the 9.5 GB free-tier limit.
 * **TTL Preservation Rules**: Redis updates are executed dynamically, retrieving and preserving the remaining seconds of a session's lifetime to prevent lifetime extensions.
 
 ---
