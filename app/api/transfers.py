@@ -11,12 +11,14 @@ from app.services.redis_service import redis_service
 from app.services.r2_service import r2_service
 from app.services.transfer_service import TransferService
 
+from app.core.security import RateLimiter
+
 router = APIRouter(prefix="/transfers", tags=["transfers"])
 
 def get_transfer_service() -> TransferService:
     return TransferService(redis_service=redis_service, r2_service=r2_service)
 
-@router.post("", response_model=TransferCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=TransferCreateResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(RateLimiter(limit=5, window_seconds=60))])
 async def create_transfer(
     payload: TransferCreate,
     service: TransferService = Depends(get_transfer_service)

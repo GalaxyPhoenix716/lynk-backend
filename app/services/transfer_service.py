@@ -1,4 +1,5 @@
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from app.core.config import settings
 from app.core.exceptions import (
@@ -45,6 +46,21 @@ class TransferService:
         if total_size > settings.MAX_TOTAL_TRANSFER_SIZE:
             raise LimitExceededException("Total transfer size limit exceeded")
 
+        client = await self.redis.get_client()
+        current_time = int(time.time())
+        await client.zremrangebyscore("lynk:active_transfers", "-inf", current_time)
+        active_items = await client.zrange("lynk:active_transfers", 0, -1)
+        current_active_size = 0
+        for item in active_items:
+            try:
+                _, size_str = item.split(":")
+                current_active_size += int(size_str)
+            except ValueError:
+                continue
+
+        if current_active_size + total_size > settings.MAX_TOTAL_R2_CAP_BYTES:
+            raise LimitExceededException("High server traffic. Active storage capacity limit reached. Please try again later.")
+
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=settings.TRANSFER_LIFETIME_SECONDS)
 
@@ -63,6 +79,9 @@ class TransferService:
             transfer.model_dump(),
             settings.TRANSFER_LIFETIME_SECONDS
         )
+
+        expires_timestamp = int(expires_at.timestamp())
+        await client.zadd("lynk:active_transfers", {f"{transfer_id}:{total_size}": expires_timestamp})
 
         upload_files = []
         for f in file_models:
@@ -169,6 +188,9 @@ class TransferService:
 
         transfer = TransferModel.model_validate(data)
         await self.redis.delete_transfer(transfer_id)
+        
+        client = await self.redis.get_client()
+        await client.zrem("lynk:active_transfers", f"{transfer_id}:{transfer.total_size}")
         
         file_ids = [f.file_id for f in transfer.files]
         await self.r2.delete_objects(transfer_id, file_ids)

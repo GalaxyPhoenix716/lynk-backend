@@ -7,7 +7,11 @@ from app.api.transfers import get_transfer_service
 from app.services.receiver_service import ReceiverService
 from app.services.transfer_service import TransferService
 
+from app.services.redis_service import redis_service
+
 mock_redis = AsyncMock()
+mock_redis.incr = AsyncMock(return_value=1)
+redis_service.get_client = AsyncMock(return_value=mock_redis)
 mock_r2 = AsyncMock()
 
 mock_receiver_service = ReceiverService(redis_service=mock_redis)
@@ -27,6 +31,8 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def run_around_tests():
     mock_redis.reset_mock()
+    mock_redis.incr = AsyncMock(return_value=1)
+    mock_redis.get_client = AsyncMock(return_value=mock_redis)
     mock_r2.reset_mock()
     yield
 

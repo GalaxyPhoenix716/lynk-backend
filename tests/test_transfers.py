@@ -5,7 +5,13 @@ from app.main import app
 from app.api.transfers import get_transfer_service
 from app.services.transfer_service import TransferService
 
+from app.services.redis_service import redis_service
+
 mock_redis = AsyncMock()
+mock_redis.incr = AsyncMock(return_value=1)
+mock_redis.get_client = AsyncMock(return_value=mock_redis)
+mock_redis.zrange = AsyncMock(return_value=[])
+redis_service.get_client = AsyncMock(return_value=mock_redis)
 mock_r2 = AsyncMock()
 
 mock_transfer_service = TransferService(redis_service=mock_redis, r2_service=mock_r2)
@@ -20,6 +26,9 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def run_around_tests():
     mock_redis.reset_mock()
+    mock_redis.incr = AsyncMock(return_value=1)
+    mock_redis.get_client = AsyncMock(return_value=mock_redis)
+    mock_redis.zrange = AsyncMock(return_value=[])
     mock_r2.reset_mock()
     yield
 
@@ -199,3 +208,28 @@ def test_cancel_transfer():
     assert response.status_code == 204
     mock_redis.delete_transfer.assert_called_once_with("tx_123")
     mock_r2.delete_objects.assert_called_once_with("tx_123", ["fid_1"])
+
+def test_create_transfer_storage_cap_exceeded():
+    mock_redis.set_transfer = AsyncMock()
+    mock_redis.zrange = AsyncMock(return_value=["tx_old:10500000000"])  # 10.5 GB active size (> 9.5 GB cap)
+
+    payload = {
+        "files": [
+            {"file_name": "photo.jpg", "file_size": 1024 * 1024 * 10, "content_type": "image/jpeg"}
+        ]
+    }
+    response = client.post("/api/v1/transfers", json=payload)
+    assert response.status_code == 413
+    assert "Active storage capacity limit reached" in response.json()["detail"]
+
+def test_create_transfer_rate_limiting():
+    mock_redis.incr = AsyncMock(return_value=6)  # Exceeds rate limit of 5
+
+    payload = {
+        "files": [
+            {"file_name": "photo.jpg", "file_size": 100, "content_type": "image/jpeg"}
+        ]
+    }
+    response = client.post("/api/v1/transfers", json=payload)
+    assert response.status_code == 429
+    assert "Rate limit exceeded" in response.json()["detail"]

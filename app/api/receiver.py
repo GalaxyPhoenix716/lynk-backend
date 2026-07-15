@@ -7,12 +7,14 @@ from app.schemas.receiver import (
 from app.services.redis_service import redis_service
 from app.services.receiver_service import ReceiverService
 
+from app.core.security import RateLimiter
+
 router = APIRouter(prefix="/receiver-sessions", tags=["receiver-sessions"])
 
 def get_receiver_service() -> ReceiverService:
     return ReceiverService(redis_service=redis_service)
 
-@router.post("", response_model=ReceiverSessionCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=ReceiverSessionCreateResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(RateLimiter(limit=5, window_seconds=60))])
 async def create_receiver_session(
     service: ReceiverService = Depends(get_receiver_service)
 ):
