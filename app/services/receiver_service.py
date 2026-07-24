@@ -52,10 +52,11 @@ class ReceiverService:
             "session_id": session.session_id,
             "status": session.status,
             "transfer_id": session.transfer_id,
+            "aes_key": session.aes_key,
             "expires_in": expires_in
         }
 
-    async def attach_transfer(self, session_id: str, transfer_id: str) -> None:
+    async def attach_transfer(self, session_id: str, transfer_id: str, aes_key: str | None = None) -> None:
         session_data = await self.redis.get_receiver_session(session_id)
         if not session_data:
             raise TransferNotFoundException("Receiver session not found or expired")
@@ -67,6 +68,8 @@ class ReceiverService:
         session = ReceiverSessionModel.model_validate(session_data)
         session.status = "attached"
         session.transfer_id = transfer_id
+        if aes_key:
+            session.aes_key = aes_key
 
         await self.redis.update_receiver_session(session_id, session.model_dump())
 

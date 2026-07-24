@@ -135,7 +135,7 @@ def test_get_metadata_success():
     mock_redis.get_transfer = AsyncMock(return_value=transfer_data)
     
     mock_client = AsyncMock()
-    mock_client.ttl = AsyncMock(return_value=1200)
+    mock_client.ttl = AsyncMock(side_effect=lambda key: 1200)
     mock_redis.get_client = AsyncMock(return_value=mock_client)
 
     response = client.get("/api/v1/transfers/tx_123")

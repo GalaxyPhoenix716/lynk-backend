@@ -33,7 +33,7 @@ async def attach_transfer(
     payload: AttachTransferRequest,
     service: ReceiverService = Depends(get_receiver_service)
 ):
-    await service.attach_transfer(session_id, payload.transfer_id)
+    await service.attach_transfer(session_id, payload.transfer_id, payload.aes_key)
     return {"detail": "Transfer attached successfully"}
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)

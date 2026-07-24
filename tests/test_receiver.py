@@ -52,13 +52,14 @@ def test_get_receiver_session_success():
         "session_id": "sess_123",
         "status": "waiting",
         "transfer_id": None,
+        "aes_key": None,
         "created_at": "2026-07-15T00:00:00Z",
         "expires_at": "2026-07-15T00:10:00Z"
     }
     mock_redis.get_receiver_session = AsyncMock(return_value=session_data)
     
     mock_client = AsyncMock()
-    mock_client.ttl = AsyncMock(return_value=600)
+    mock_client.ttl = AsyncMock(side_effect=lambda key: 600)
     mock_redis.get_client = AsyncMock(return_value=mock_client)
 
     response = client.get("/api/v1/receiver-sessions/sess_123")
@@ -68,18 +69,44 @@ def test_get_receiver_session_success():
     assert data["session_id"] == "sess_123"
     assert data["status"] == "waiting"
     assert data["transfer_id"] is None
+    assert data["aes_key"] is None
     assert data["expires_in"] == 600
+
+def test_get_receiver_session_attached_with_aes_key():
+    session_data = {
+        "session_id": "sess_123",
+        "status": "attached",
+        "transfer_id": "tx_123",
+        "aes_key": "32_byte_secret_aes_key_here",
+        "created_at": "2026-07-15T00:00:00Z",
+        "expires_at": "2026-07-15T00:10:00Z"
+    }
+    mock_redis.get_receiver_session = AsyncMock(return_value=session_data)
+    
+    mock_client = AsyncMock()
+    mock_client.ttl = AsyncMock(side_effect=lambda key: 600)
+    mock_redis.get_client = AsyncMock(return_value=mock_client)
+
+    response = client.get("/api/v1/receiver-sessions/sess_123")
+    assert response.status_code == 200
+    
+    data = response.json()
+    assert data["session_id"] == "sess_123"
+    assert data["status"] == "attached"
+    assert data["transfer_id"] == "tx_123"
+    assert data["aes_key"] == "32_byte_secret_aes_key_here"
 
 def test_get_receiver_session_not_found():
     mock_redis.get_receiver_session = AsyncMock(return_value=None)
     response = client.get("/api/v1/receiver-sessions/sess_missing")
     assert response.status_code == 404
 
-def test_attach_transfer_success():
+def test_attach_transfer_success_with_aes_key():
     session_data = {
         "session_id": "sess_123",
         "status": "waiting",
         "transfer_id": None,
+        "aes_key": None,
         "created_at": "2026-07-15T00:00:00Z",
         "expires_at": "2026-07-15T00:10:00Z"
     }
@@ -96,7 +123,7 @@ def test_attach_transfer_success():
     mock_redis.get_transfer = AsyncMock(return_value=transfer_data)
     mock_redis.update_receiver_session = AsyncMock()
 
-    payload = {"transfer_id": "tx_123"}
+    payload = {"transfer_id": "tx_123", "aes_key": "32_byte_secret_aes_key_here"}
     response = client.post("/api/v1/receiver-sessions/sess_123/attach-transfer", json=payload)
     
     assert response.status_code == 200

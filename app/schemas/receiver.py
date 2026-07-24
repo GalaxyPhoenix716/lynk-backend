@@ -9,7 +9,9 @@ class ReceiverSessionResponse(BaseModel):
     session_id: str
     status: str
     transfer_id: str | None = None
+    aes_key: str | None = None
     expires_in: int
 
 class AttachTransferRequest(BaseModel):
     transfer_id: str
+    aes_key: str | None = None
