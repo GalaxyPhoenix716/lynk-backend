@@ -89,12 +89,15 @@ class TransferService:
             upload_files.append({
                 "file_id": f.file_id,
                 "file_name": f.file_name,
+                "file_size": f.file_size,
                 "upload_url": url
             })
 
         return {
             "transfer_id": transfer_id,
             "status": "uploading",
+            "total_files": len(file_models),
+            "total_size": total_size,
             "expires_in": settings.TRANSFER_LIFETIME_SECONDS,
             "files": upload_files
         }

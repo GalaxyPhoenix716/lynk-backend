@@ -11,11 +11,14 @@ class TransferCreate(BaseModel):
 class FileUploadResponse(BaseModel):
     file_id: str
     file_name: str
+    file_size: int
     upload_url: str
 
 class TransferCreateResponse(BaseModel):
     transfer_id: str
     status: str
+    total_files: int
+    total_size: int
     expires_in: int
     files: list[FileUploadResponse]
 
