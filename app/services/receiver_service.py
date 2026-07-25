@@ -48,13 +48,22 @@ class ReceiverService:
         ttl = await client.ttl(key)
         expires_in = max(0, ttl) if ttl != -2 else 0
 
-        return {
+        res = {
             "session_id": session.session_id,
             "status": session.status,
             "transfer_id": session.transfer_id,
             "aes_key": session.aes_key,
             "expires_in": expires_in
         }
+
+        # Single-Use Key Auto-Wipe:
+        # Once the attached session's aes_key is delivered to the receiver,
+        # wipe aes_key from Redis memory immediately for zero-knowledge security.
+        if session.status == "attached" and session.aes_key:
+            session.aes_key = None
+            await self.redis.update_receiver_session(session_id, session.model_dump())
+
+        return res
 
     async def attach_transfer(self, session_id: str, transfer_id: str, aes_key: str | None = None) -> None:
         session_data = await self.redis.get_receiver_session(session_id)

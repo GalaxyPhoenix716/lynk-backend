@@ -95,6 +95,7 @@ def test_get_receiver_session_attached_with_aes_key():
     assert data["status"] == "attached"
     assert data["transfer_id"] == "tx_123"
     assert data["aes_key"] == "32_byte_secret_aes_key_here"
+    mock_redis.update_receiver_session.assert_called_once()
 
 def test_get_receiver_session_not_found():
     mock_redis.get_receiver_session = AsyncMock(return_value=None)
