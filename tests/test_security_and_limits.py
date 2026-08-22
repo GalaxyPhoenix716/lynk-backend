@@ -252,6 +252,18 @@ def test_cors_allowed_origin_is_echoed():
     assert response.headers.get("access-control-allow-origin") == allowed
 
 
+def test_cors_production_domain_lynkshare_app_is_allowed():
+    # The canonical production deep-link domain must be in the default
+    # allowlist (docs: domain purchased via Name.com, proxied by Cloudflare).
+    assert "https://lynkshare.app" in settings.ALLOWED_ORIGINS
+    assert "https://lynk.app" not in settings.ALLOWED_ORIGINS
+
+    response = _preflight("https://lynkshare.app")
+    assert response.headers.get("access-control-allow-origin") == (
+        "https://lynkshare.app"
+    )
+
+
 def test_cors_does_not_allow_credentials_with_wildcard():
     # The dangerous combination (origins=["*"], credentials=True) must be gone.
     cors_middleware = None

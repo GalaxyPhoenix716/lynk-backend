@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     DOWNLOAD_URL_LIFETIME_SECONDS: int = 300
 
     ALLOWED_ORIGINS: list[str] = [
-        "https://lynk.app",
+        "https://lynkshare.app",
         "http://localhost:8000",
         "http://localhost:3000",
     ]
