@@ -6,6 +6,7 @@ from app.schemas.transfer import (
     FileCompleteResponse,
     FileDownloadRequest,
     TransferDownloadResponse,
+    TransferExtendResponse,
 )
 from app.services.redis_service import redis_service
 from app.services.r2_service import r2_service
@@ -48,6 +49,13 @@ async def get_download_urls(
     service: TransferService = Depends(get_transfer_service)
 ):
     return await service.get_download_urls(transfer_id, payload.file_ids)
+
+@router.post("/{transfer_id}/extend", response_model=TransferExtendResponse, dependencies=[Depends(RateLimiter(limit=5, window_seconds=60))])
+async def extend_transfer(
+    transfer_id: str,
+    service: TransferService = Depends(get_transfer_service)
+):
+    return await service.extend_transfer(transfer_id)
 
 @router.delete("/{transfer_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def cancel_transfer(

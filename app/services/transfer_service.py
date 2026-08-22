@@ -158,6 +158,35 @@ class TransferService:
             ]
         }
 
+    async def extend_transfer(self, transfer_id: str) -> dict:
+        data = await self.redis.get_transfer(transfer_id)
+        if not data:
+            raise TransferNotFoundException()
+
+        transfer = TransferModel.model_validate(data)
+
+        now = datetime.now(timezone.utc)
+        new_expires_at = now + timedelta(seconds=settings.EXTENDED_TRANSFER_LIFETIME_SECONDS)
+        transfer.expires_at = new_expires_at.isoformat()
+
+        await self.redis.extend_transfer(
+            transfer_id,
+            transfer.model_dump(),
+            settings.EXTENDED_TRANSFER_LIFETIME_SECONDS
+        )
+
+        client = await self.redis.get_client()
+        await client.zadd(
+            "lynk:active_transfers",
+            {f"{transfer_id}:{transfer.total_size}": int(new_expires_at.timestamp())}
+        )
+
+        return {
+            "transfer_id": transfer.transfer_id,
+            "status": transfer.status,
+            "expires_in": settings.EXTENDED_TRANSFER_LIFETIME_SECONDS
+        }
+
     async def get_download_urls(self, transfer_id: str, file_ids: list[str] | None = None) -> dict:
         data = await self.redis.get_transfer(transfer_id)
         if not data:

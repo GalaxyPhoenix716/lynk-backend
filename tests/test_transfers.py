@@ -64,12 +64,36 @@ def test_create_transfer_limit_exceeded_file_count():
 def test_create_transfer_limit_exceeded_individual_size():
     payload = {
         "files": [
-            {"file_name": "large.zip", "file_size": 60 * 1024 * 1024, "content_type": "application/zip"}
+            {"file_name": "large.zip", "file_size": 160 * 1024 * 1024, "content_type": "application/zip"}
         ]
     }
     response = client.post("/api/v1/transfers", json=payload)
     assert response.status_code == 413
     assert "exceeds individual size limit" in response.json()["detail"]
+
+def test_create_transfer_allows_20mb_free_tier_file():
+    mock_redis.set_transfer = AsyncMock()
+    mock_r2.generate_upload_url = AsyncMock(return_value="https://r2.mock/upload")
+
+    payload = {
+        "files": [
+            {"file_name": "free.zip", "file_size": 20 * 1024 * 1024, "content_type": "application/zip"}
+        ]
+    }
+    response = client.post("/api/v1/transfers", json=payload)
+    assert response.status_code == 201
+
+def test_create_transfer_allows_50mb_unlocked_file():
+    mock_redis.set_transfer = AsyncMock()
+    mock_r2.generate_upload_url = AsyncMock(return_value="https://r2.mock/upload")
+
+    payload = {
+        "files": [
+            {"file_name": "unlocked.zip", "file_size": 50 * 1024 * 1024, "content_type": "application/zip"}
+        ]
+    }
+    response = client.post("/api/v1/transfers", json=payload)
+    assert response.status_code == 201
 
 def test_create_transfer_limit_exceeded_total_size():
     from unittest.mock import patch

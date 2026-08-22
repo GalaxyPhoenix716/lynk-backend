@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.transfers import router as transfers_router
 from app.api.receiver import router as receiver_router
 from app.core.exceptions import register_exception_handlers
+from app.core.config import settings
 from app.services.redis_service import redis_service
 
 @asynccontextmanager
@@ -21,10 +22,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept"],
 )
 
 register_exception_handlers(app)

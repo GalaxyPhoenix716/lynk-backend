@@ -52,20 +52,19 @@ class ReceiverService:
             "session_id": session.session_id,
             "status": session.status,
             "transfer_id": session.transfer_id,
-            "aes_key": session.aes_key,
+            "wrapped_key": session.wrapped_key,
             "expires_in": expires_in
         }
 
-        # Single-Use Key Auto-Wipe:
-        # Once the attached session's aes_key is delivered to the receiver,
-        # wipe aes_key from Redis memory immediately for zero-knowledge security.
-        if session.status == "attached" and session.aes_key:
-            session.aes_key = None
+        # Single-use delivery: once the ECDH-sealed wrapped_key is handed to
+        # the receiver, wipe it from Redis so no later reader can obtain it.
+        if session.status == "attached" and session.wrapped_key:
+            session.wrapped_key = None
             await self.redis.update_receiver_session(session_id, session.model_dump())
 
         return res
 
-    async def attach_transfer(self, session_id: str, transfer_id: str, aes_key: str | None = None) -> None:
+    async def attach_transfer(self, session_id: str, transfer_id: str, wrapped_key: str | None = None) -> None:
         session_data = await self.redis.get_receiver_session(session_id)
         if not session_data:
             raise TransferNotFoundException("Receiver session not found or expired")
@@ -77,8 +76,8 @@ class ReceiverService:
         session = ReceiverSessionModel.model_validate(session_data)
         session.status = "attached"
         session.transfer_id = transfer_id
-        if aes_key:
-            session.aes_key = aes_key
+        if wrapped_key:
+            session.wrapped_key = wrapped_key
 
         await self.redis.update_receiver_session(session_id, session.model_dump())
 

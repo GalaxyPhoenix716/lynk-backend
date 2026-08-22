@@ -97,6 +97,25 @@ class RedisService:
             logger.error(f"Redis delete_transfer failed: {e}")
             raise ServiceUnavailableException("Failed to delete transfer metadata")
 
+    async def extend_transfer(self, transfer_id: str, data: dict, ttl_seconds: int) -> None:
+        """
+        Extends a transfer's lifetime to ttl_seconds (Rewarded Ad unlock).
+        Raises TransferNotFoundException if the transfer has expired or does not exist.
+        """
+        client = await self.get_client()
+        key = self._get_key(transfer_id)
+        try:
+            exists = await client.exists(key)
+            if not exists:
+                raise TransferNotFoundException()
+            val = json.dumps(data)
+            await client.setex(key, ttl_seconds, val)
+        except TransferNotFoundException:
+            raise
+        except Exception as e:
+            logger.error(f"Redis extend_transfer failed: {e}")
+            raise ServiceUnavailableException("Failed to extend transfer lifetime")
+
     def _get_receiver_key(self, session_id: str) -> str:
         return f"lynk:receiver:{session_id}"
 

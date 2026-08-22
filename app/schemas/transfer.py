@@ -52,3 +52,8 @@ class FileCompleteResponse(BaseModel):
     file_id: str
     status: str
     transfer_status: str
+
+class TransferExtendResponse(BaseModel):
+    transfer_id: str
+    status: str
+    expires_in: int

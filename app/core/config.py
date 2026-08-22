@@ -14,14 +14,23 @@ class Settings(BaseSettings):
     R2_BUCKET_NAME: str = "lynk-transfers"
 
     MAX_FILES_PER_TRANSFER: int = 10
+    # Cloud/R2 tiers: free = 20 MB, rewarded-ad unlock = 50 MB.
+    # Server enforces the absolute ceiling (cannot verify ad views).
     MAX_INDIVIDUAL_FILE_SIZE: int = 52428800
     MAX_TOTAL_TRANSFER_SIZE: int = 524288000
     MAX_TOTAL_R2_CAP_BYTES: int = 10200547328
-    
-    TRANSFER_LIFETIME_SECONDS: int = 1800
+
+    TRANSFER_LIFETIME_SECONDS: int = 600
+    EXTENDED_TRANSFER_LIFETIME_SECONDS: int = 1800
     RECEIVER_SESSION_LIFETIME_SECONDS: int = 600
     UPLOAD_URL_LIFETIME_SECONDS: int = 900
     DOWNLOAD_URL_LIFETIME_SECONDS: int = 300
+
+    ALLOWED_ORIGINS: list[str] = [
+        "https://lynk.app",
+        "http://localhost:8000",
+        "http://localhost:3000",
+    ]
 
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
