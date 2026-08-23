@@ -13,6 +13,8 @@ from app.services.r2_service import r2_service
 from app.services.transfer_service import TransferService
 
 from app.core.security import RateLimiter
+from app.core.config import settings
+from app.services.turn_service import generate_turn_credentials
 
 router = APIRouter(prefix="/transfers", tags=["transfers"])
 
@@ -63,3 +65,23 @@ async def cancel_transfer(
     service: TransferService = Depends(get_transfer_service)
 ):
     await service.cancel_transfer(transfer_id)
+
+@router.get("/{transfer_id}/turn-credentials", dependencies=[Depends(RateLimiter(limit=10, window_seconds=60))])
+async def get_turn_credentials(transfer_id: str):
+    """Short-lived TURN relay credentials for the P2P ICE ladder.
+
+    Returns `enabled: false` when TURN is not configured so clients degrade
+    gracefully to STUN-only + R2 fallback.
+    """
+    if not settings.TURN_URLS or not settings.TURN_SECRET:
+        return {"enabled": False, "urls": [], "username": "", "credential": "", "ttl": 0}
+    creds = generate_turn_credentials(
+        secret=settings.TURN_SECRET,
+        session_id=transfer_id,
+        ttl_seconds=settings.TURN_CREDENTIAL_TTL_SECONDS,
+    )
+    return {
+        "enabled": True,
+        "urls": [u.strip() for u in settings.TURN_URLS.split(",") if u.strip()],
+        **creds,
+    }
