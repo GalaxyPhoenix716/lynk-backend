@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     UPLOAD_URL_LIFETIME_SECONDS: int = 900
     DOWNLOAD_URL_LIFETIME_SECONDS: int = 300
 
+    # TURN relay (P2P fallback path). Empty = disabled; clients degrade to
+    # STUN-only + R2 cloud fallback.
+    TURN_URLS: str = ""  # comma-separated, e.g. "turn:turn.lynkshare.app:3478"
+    TURN_SECRET: str = ""
+    TURN_CREDENTIAL_TTL_SECONDS: int = 600
+
     ALLOWED_ORIGINS: list[str] = [
         "https://lynkshare.app",
         "http://localhost:8000",

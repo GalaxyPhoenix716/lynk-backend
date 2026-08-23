@@ -1,11 +1,10 @@
-"""Signaling WebSocket tests for P2P implementation.
+"""Signaling WebSocket tests — two-party fan-out + late-joiner replay.
 
-Tests the WebSocket signaling endpoint at ws/signaling/{session_id}
-for offer/answer/candidate exchange between peers.
+Contract (Phases.md): the server is a dumb relay for `offer`, `answer` and
+`candidate` JSON between the two peers of a session room. Messages are
+buffered per room and replayed to a peer that joins late, so the sender may
+signal its offer before the receiver has connected.
 """
-from unittest.mock import AsyncMock, patch
-import json
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -17,103 +16,68 @@ def client():
     return TestClient(app)
 
 
-class TestSigningWebSocket:
-    """WebSocket signaling tests."""
+class TestTwoPartyRelay:
+    def test_offer_relays_from_sender_to_receiver(self, client):
+        with client.websocket_connect("/ws/signaling/relay-1") as a:
+            a.send_json({"type": "offer", "sdp": "sdp-from-a"})
+            with client.websocket_connect("/ws/signaling/relay-1") as b:
+                # Late joiner gets the buffered offer replayed on connect.
+                assert b.receive_json() == {"type": "offer", "sdp": "sdp-from-a"}
+                # And the sender receives nothing on its own socket.
+                a.send_json({"type": "ping-probe"})
+                assert b.receive_json() == {"type": "ping-probe"}
 
-    def test_websocket_connection_establishes_room(self, client):
-        """WebSocket connection should create a room and track participants."""
-        with client.websocket_connect("/ws/signaling/test-session-1") as ws:
-            # Connection should succeed and create a room
-            # Send an offer
-            ws.send_json({"type": "offer", "sdp": "test_sdp_offer"})
-            response = ws.receive_json()
-            assert response["type"] == "offer_accepted"
-            assert response["sdp"] == "test_sdp_offer"
+    def test_answer_and_candidates_relay_both_ways(self, client):
+        with client.websocket_connect("/ws/signaling/relay-2") as a:
+            with client.websocket_connect("/ws/signaling/relay-2") as b:
+                a.send_json({"type": "offer", "sdp": "o"})
+                assert b.receive_json() == {"type": "offer", "sdp": "o"}
 
-            # Send an answer
-            ws.send_json({"type": "answer", "sdp": "test_sdp_answer"})
-            response = ws.receive_json()
-            assert response["type"] == "answer_accepted"
-            assert response["sdp"] == "test_sdp_answer"
+                b.send_json({"type": "answer", "sdp": "ans"})
+                assert a.receive_json() == {"type": "answer", "sdp": "ans"}
 
-            # Send a candidate - server returns the full candidate dict
-            ws.send_json({"type": "candidate", "candidate": {"candidate": "test_candidate", "sdpMid": "mid", "sdpMLineIndex": 0}})
-            response = ws.receive_json()
-            # Server echoes back the full candidate dict
-            assert response["type"] == "candidate_acked"
-            assert response["candidate"]["candidate"] == "test_candidate"
+                cand = {
+                    "type": "candidate",
+                    "candidate": {"candidate": "c1", "sdpMid": "0"},
+                }
+                b.send_json(cand)
+                assert a.receive_json() == cand
 
-    def test_websocket_invalid_json_rejected(self, client):
-        """Invalid JSON should return an error message."""
-        with client.websocket_connect("/ws/signaling/test-session-2") as ws:
-            ws.send_text("not valid json")
-            response = ws.receive_json()
-            assert response["type"] == "error"
-            assert "invalid JSON" in response["msg"]
+    def test_invalid_json_gets_error_on_sender_socket_only(self, client):
+        with client.websocket_connect("/ws/signaling/relay-3") as a:
+            with client.websocket_connect("/ws/signaling/relay-3") as b:
+                a.send_text("not-json{")
+                err = a.receive_json()
+                assert err["type"] == "error"
+                assert "invalid JSON" in err["msg"]
+                # The malformed frame is NOT relayed or buffered: probe with a
+                # valid frame and confirm the peer sees exactly that one.
+                a.send_json({"type": "candidate", "candidate": {"candidate": "c"}})
+                assert b.receive_json()["type"] == "candidate"
 
-    def test_websocket_unknown_type_rejected(self, client):
-        """Unknown message type should return an error."""
-        with client.websocket_connect("/ws/signaling/test-session-3") as ws:
-            ws.send_json({"type": "unknown_type"})
-            response = ws.receive_json()
-            assert response["type"] == "error"
-            assert "unknown type" in response["msg"]
+    def test_replay_contains_buffered_history_in_order(self, client):
+        with client.websocket_connect("/ws/signaling/relay-4") as a:
+            a.send_json({"type": "offer", "sdp": "first"})
+            a.send_json({
+                "type": "candidate",
+                "candidate": {"candidate": "cand-1", "sdpMid": "0"},
+            })
+            with client.websocket_connect("/ws/signaling/relay-4") as b:
+                assert b.receive_json() == {"type": "offer", "sdp": "first"}
+                assert b.receive_json() == {
+                    "type": "candidate",
+                    "candidate": {"candidate": "cand-1", "sdpMid": "0"},
+                }
 
-    def test_websocket_multiple_messages(self, client):
-        """Multiple message types should be handled in sequence."""
-        with client.websocket_connect("/ws/signaling/test-session-4") as ws:
-            # Sequence: offer -> answer -> candidate
-            ws.send_json({"type": "offer", "sdp": "sdp1"})
-            resp1 = ws.receive_json()
-            assert resp1["type"] == "offer_accepted"
-
-            ws.send_json({"type": "answer", "sdp": "sdp2"})
-            resp2 = ws.receive_json()
-            assert resp2["type"] == "answer_accepted"
-
-            ws.send_json({"type": "candidate", "candidate": {"candidate": "cand1", "sdpMid": "mid", "sdpMLineIndex": 0}})
-            resp3 = ws.receive_json()
-            assert resp3["type"] == "candidate_acked"
-            assert resp3["candidate"]["candidate"] == "cand1"
-
-    def test_websocket_disconnect_cleans_up(self, client):
-        """Disconnect should remove the participant and clean up empty rooms."""
-        with client.websocket_connect("/ws/signaling/test-session-clean") as ws:
-            # Send a message
-            ws.send_json({"type": "offer", "sdp": "sdp"})
-            # Disconnect
-        # After disconnect, the room should be cleaned up (no participants)
-        # The room state is in-memory; we verify by trying a new connection
-        with client.websocket_connect("/ws/signaling/test-session-clean") as ws2:
-            # Should create a fresh room
-            ws2.send_json({"type": "offer", "sdp": "new_sdp"})
-            resp = ws2.receive_json()
-            assert resp["type"] == "offer_accepted"
-
-
-class TestSignalingIntegration:
-    """Integration-style tests for signaling flow."""
-
-    def test_full_offer_answer_candidate_flow(self, client):
-        """Test the complete flow: offer -> answer -> candidate."""
-        with client.websocket_connect("/ws/signaling/full-flow") as ws_a:
-            # Peer A sends offer
-            ws_a.send_json({"type": "offer", "sdp": "offer_sdp"})
-            # Verify offer was accepted
-            response = ws_a.receive_json()
-            assert response["type"] == "offer_accepted"
-
-            # Peer A sends answer
-            ws_a.send_json({"type": "answer", "sdp": "answer_sdp"})
-            # Verify answer was accepted (note: on same connection, response may vary)
-            # In a real peer-to-peer setup, the answer would come from the remote peer
-            response = ws_a.receive_json()
-            # Acceptable responses: answer_accepted (if server echoes back)
-            # or offer_accepted (due to state machine behavior in this test setup)
-            assert response["type"] in ("answer_accepted", "offer_accepted")
-
-            # Send candidate
-            ws_a.send_json({"type": "candidate", "candidate": {"candidate": "candidate_1", "sdpMid": "mid", "sdpMLineIndex": 0}})
-            response = ws_a.receive_json()
-            assert response["type"] == "candidate_acked"
-            assert response["candidate"]["candidate"] == "candidate_1"
+    def test_room_survives_one_peer_disconnecting(self, client):
+        with client.websocket_connect("/ws/signaling/relay-5") as a:
+            a.send_json({"type": "offer", "sdp": "pre"})
+            b_ctx = client.websocket_connect("/ws/signaling/relay-5")
+            b = b_ctx.__enter__()
+            try:
+                assert b.receive_json()["type"] == "offer"
+            finally:
+                b_ctx.__exit__(None, None, None)
+            # A stays connected; room must not be dropped. New joiner replays.
+            with client.websocket_connect("/ws/signaling/relay-5") as c:
+                assert c.receive_json() == {"type": "offer", "sdp": "pre"}
