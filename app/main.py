@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.transfers import router as transfers_router
 from app.api.receiver import router as receiver_router
+from app.api.signaling import router as signaling_router
 from app.core.exceptions import register_exception_handlers
 from app.core.config import settings
 from app.services.redis_service import redis_service
@@ -32,6 +33,7 @@ register_exception_handlers(app)
 
 app.include_router(transfers_router, prefix="/api/v1")
 app.include_router(receiver_router, prefix="/api/v1")
+app.include_router(signaling_router, prefix="/ws", tags=["signaling"])
 
 @app.get("/")
 async def root():
