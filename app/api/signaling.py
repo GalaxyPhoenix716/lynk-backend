@@ -1,23 +1,21 @@
 import json
-from typing import Optional, Dict, List, Any
-from fastapi import WebSocket, WebSocketDisconnect, APIRouter
+from typing import Any, Dict, List
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter(tags=["signaling"])
 
-# Shared in-memory room state (per session).
-# Structure: {session_id: {"participants": set(), "offer": Optional[str], "answer": Optional[str], "candidates": List[Dict]}}
+# session_id -> room state. The server is a *dumb relay*: it forwards every
+# valid JSON object to the other peers and buffers a bounded history so a
+# peer that joins late (receiver after sender) still receives the offer.
 rooms: Dict[str, Dict[str, Any]] = {}
+
+_HISTORY_CAP = 100
 
 
 def _get_room(session_id: str) -> Dict[str, Any]:
-    """Get or create a room for the given session ID."""
     if session_id not in rooms:
-        rooms[session_id] = {
-            "participants": set(),
-            "offer": None,
-            "answer": None,
-            "candidates": [],
-        }
+        rooms[session_id] = {"members": [], "history": []}
     return rooms[session_id]
 
 
@@ -25,38 +23,35 @@ def _get_room(session_id: str) -> Dict[str, Any]:
 async def signaling_ws(websocket: WebSocket, session_id: str):
     await websocket.accept()
     room = _get_room(session_id)
-    room["participants"].add("client")
+
+    # Replay buffered history to the late joiner (sender may have signaled
+    # before the receiver connected).
+    for frame in list(room["history"]):
+        await websocket.send_text(frame)
+    room["members"].append(websocket)
 
     try:
         while True:
             raw = await websocket.receive_text()
             try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                await websocket.send_text(json.dumps({"type": "error", "msg": "invalid JSON"}))
+                decoded = json.loads(raw)
+                if not isinstance(decoded, dict):
+                    raise ValueError("not an object")
+            except (json.JSONDecodeError, ValueError):
+                await websocket.send_text(
+                    json.dumps({"type": "error", "msg": "invalid JSON"})
+                )
                 continue
 
-            msg_type = msg.get("type")
-            if msg_type == "offer":
-                sdp = msg.get("sdp")
-                room["offer"] = sdp
-                # Acknowledge offer locally; in full setup forward to peer WS.
-                await websocket.send_text(json.dumps({"type": "offer_accepted", "sdp": sdp}))
-
-            elif msg_type == "answer":
-                sdp = msg.get("sdp")
-                room["answer"] = sdp
-                await websocket.send_text(json.dumps({"type": "answer_accepted", "sdp": sdp}))
-
-            elif msg_type == "candidate":
-                candidate = msg.get("candidate")
-                room["candidates"].append(candidate)
-                await websocket.send_text(json.dumps({"type": "candidate_acked", "candidate": candidate}))
-
-            else:
-                await websocket.send_text(json.dumps({"type": "error", "msg": f"unknown type: {msg_type}"}))
+            # Buffer once, then fan out to everyone else.
+            room["history"].append(raw)
+            if len(room["history"]) > _HISTORY_CAP:
+                del room["history"][: len(room["history"]) - _HISTORY_CAP]
+            for peer in list(room["members"]):
+                if peer is not websocket:
+                    await peer.send_text(raw)
 
     except WebSocketDisconnect:
-        room["participants"].discard("client")
-        if not room["participants"]:
+        room["members"] = [m for m in room["members"] if m is not websocket]
+        if not room["members"]:
             rooms.pop(session_id, None)
