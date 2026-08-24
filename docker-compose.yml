@@ -10,10 +10,14 @@ services:
   web:
     build: .
     restart: always
+    # MUST stay single-worker: WebRTC signaling rooms are process-local.
+    # Scaling out requires Redis-backed fan-out (see app/api/signaling.py).
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - WEB_CONCURRENCY=1
     env_file:
       - .env
     depends_on:

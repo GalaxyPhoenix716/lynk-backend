@@ -1,3 +1,5 @@
+import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,6 +12,16 @@ from app.services.redis_service import redis_service
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # WebRTC signaling rooms are process-local (see app/api/signaling.py).
+    # Multiple workers would silently split sender/receiver into separate
+    # rooms, so scale vertically until Redis-backed fan-out lands (Phase 5).
+    concurrency = os.getenv("WEB_CONCURRENCY", "1")
+    if concurrency.isdigit() and int(concurrency) > 1:
+        logging.getLogger("lynk.startup").critical(
+            "WEB_CONCURRENCY=%s but P2P signaling requires a single worker. "
+            "Signaling WILL break across workers. Set WEB_CONCURRENCY=1.",
+            concurrency,
+        )
     redis_service.init_pool()
     yield
     await redis_service.close_pool()
