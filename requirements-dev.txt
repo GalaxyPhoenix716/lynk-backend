@@ -1,0 +1,5 @@
+# Dev tooling — not required at runtime.
+# Install:  pip install -r requirements-dev.txt
+# Lint:     python -m ruff check --fix .
+# Format:   python -m ruff format .
+ruff==0.16.4

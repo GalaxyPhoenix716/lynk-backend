@@ -20,7 +20,7 @@ lifetime and fan-out via per-session Redis pub/sub channels.
 """
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -29,12 +29,12 @@ router = APIRouter(tags=["signaling"])
 # session_id -> room state. The server is a *dumb relay*: it forwards every
 # valid JSON object to the other peers and buffers a bounded history so a
 # peer that joins late (receiver after sender) still receives the offer.
-rooms: Dict[str, Dict[str, Any]] = {}
+rooms: dict[str, dict[str, Any]] = {}
 
 _HISTORY_CAP = 100
 
 
-def _get_room(session_id: str) -> Dict[str, Any]:
+def _get_room(session_id: str) -> dict[str, Any]:
     if session_id not in rooms:
         rooms[session_id] = {"members": [], "history": []}
     return rooms[session_id]
