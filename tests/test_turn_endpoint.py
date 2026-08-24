@@ -1,4 +1,5 @@
 """Endpoint tests for TURN credential distribution."""
+
 from unittest.mock import patch
 
 import pytest

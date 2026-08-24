@@ -18,6 +18,7 @@ Enforcement:
 Scaling path (Phase 5): move history to a Redis key with TTL ≈ session
 lifetime and fan-out via per-session Redis pub/sub channels.
 """
+
 import json
 from typing import Any, Dict
 
@@ -58,9 +59,7 @@ async def signaling_ws(websocket: WebSocket, session_id: str):
                 if not isinstance(decoded, dict):
                     raise ValueError("not an object")
             except (json.JSONDecodeError, ValueError):
-                await websocket.send_text(
-                    json.dumps({"type": "error", "msg": "invalid JSON"})
-                )
+                await websocket.send_text(json.dumps({"type": "error", "msg": "invalid JSON"}))
                 continue
 
             # Buffer once, then fan out to everyone else.

@@ -6,6 +6,7 @@ Encodes the documented guarantees:
 - Default transfer session lifetime = 10 min, extendable to 30 min.
 - CORS restricted to explicit allowed origins (no wildcard + credentials).
 """
+
 from unittest.mock import AsyncMock
 
 import pytest
@@ -46,6 +47,7 @@ client = TestClient(app)
 # Configuration alignment with docs
 # ---------------------------------------------------------------------------
 
+
 def test_cloud_individual_file_cap_is_50mb():
     # Cloud/R2 tiers (docs decision): free = 20 MB, rewarded-ad unlock = 50 MB.
     # The server enforces the absolute ceiling: 50 MB.
@@ -64,6 +66,7 @@ def test_extended_transfer_lifetime_is_30_minutes():
 # ---------------------------------------------------------------------------
 # Zero-knowledge guarantee
 # ---------------------------------------------------------------------------
+
 
 def test_receiver_session_response_never_contains_aes_key(mock_env):
     # Even if a LEGACY session record still carries an aes_key in Redis,
@@ -113,9 +116,7 @@ def test_attach_transfer_never_stores_client_supplied_aes_key(mock_env):
     mock_env["redis"].update_receiver_session = AsyncMock()
 
     payload = {"transfer_id": "tx_123", "aes_key": "attacker_or_legacy_key"}
-    response = client.post(
-        "/api/v1/receiver-sessions/sess_123/attach-transfer", json=payload
-    )
+    response = client.post("/api/v1/receiver-sessions/sess_123/attach-transfer", json=payload)
     assert response.status_code == 200
 
     mock_env["redis"].update_receiver_session.assert_called_once()
@@ -190,6 +191,7 @@ def test_get_receiver_session_delivers_wrapped_key_once(mock_env):
 # Session extension (Rewarded Ad unlock: 10 min -> 30 min)
 # ---------------------------------------------------------------------------
 
+
 def test_extend_transfer_returns_extended_expiry(mock_env):
     transfer_data = {
         "transfer_id": "tx_123",
@@ -223,6 +225,7 @@ def test_extend_transfer_not_found(mock_env):
 # ---------------------------------------------------------------------------
 # CORS hardening
 # ---------------------------------------------------------------------------
+
 
 def _preflight(origin: str):
     return client.options(
@@ -259,9 +262,7 @@ def test_cors_production_domain_lynkshare_app_is_allowed():
     assert "https://lynk.app" not in settings.ALLOWED_ORIGINS
 
     response = _preflight("https://lynkshare.app")
-    assert response.headers.get("access-control-allow-origin") == (
-        "https://lynkshare.app"
-    )
+    assert response.headers.get("access-control-allow-origin") == ("https://lynkshare.app")
 
 
 def test_cors_does_not_allow_credentials_with_wildcard():

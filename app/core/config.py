@@ -1,6 +1,7 @@
 import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     PORT: int = 8000
@@ -41,7 +42,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),
         env_file_encoding="utf-8",
-        extra="ignore"
+        extra="ignore",
     )
+
 
 settings = Settings()

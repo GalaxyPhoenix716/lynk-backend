@@ -1,9 +1,10 @@
 import secrets
 from datetime import datetime, timedelta, timezone
 from app.core.config import settings
-from app.core.exceptions import TransferNotFoundException, InvalidInputException
+from app.core.exceptions import TransferNotFoundException
 from app.models.receiver import ReceiverSessionModel
 from app.services.redis_service import RedisService
+
 
 class ReceiverService:
     def __init__(self, redis_service: RedisService) -> None:
@@ -21,19 +22,17 @@ class ReceiverService:
             session_id=session_id,
             status="waiting",
             created_at=now.isoformat(),
-            expires_at=expires_at.isoformat()
+            expires_at=expires_at.isoformat(),
         )
 
         await self.redis.set_receiver_session(
-            session_id,
-            session.model_dump(),
-            settings.RECEIVER_SESSION_LIFETIME_SECONDS
+            session_id, session.model_dump(), settings.RECEIVER_SESSION_LIFETIME_SECONDS
         )
 
         return {
             "session_id": session_id,
             "status": "waiting",
-            "expires_in": settings.RECEIVER_SESSION_LIFETIME_SECONDS
+            "expires_in": settings.RECEIVER_SESSION_LIFETIME_SECONDS,
         }
 
     async def get_receiver_session(self, session_id: str) -> dict:
@@ -53,7 +52,7 @@ class ReceiverService:
             "status": session.status,
             "transfer_id": session.transfer_id,
             "wrapped_key": session.wrapped_key,
-            "expires_in": expires_in
+            "expires_in": expires_in,
         }
 
         # Single-use delivery: once the ECDH-sealed wrapped_key is handed to
@@ -64,7 +63,9 @@ class ReceiverService:
 
         return res
 
-    async def attach_transfer(self, session_id: str, transfer_id: str, wrapped_key: str | None = None) -> None:
+    async def attach_transfer(
+        self, session_id: str, transfer_id: str, wrapped_key: str | None = None
+    ) -> None:
         session_data = await self.redis.get_receiver_session(session_id)
         if not session_data:
             raise TransferNotFoundException("Receiver session not found or expired")

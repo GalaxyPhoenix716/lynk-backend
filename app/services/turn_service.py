@@ -4,6 +4,7 @@ The shared secret lives only in the backend environment. Clients receive
 time-limited HMAC credentials so a leaked credential expires on its own
 (POTENTIAL_ISSUES #18 mitigation).
 """
+
 import base64
 import hashlib
 import hmac

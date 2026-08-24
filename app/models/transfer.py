@@ -1,11 +1,13 @@
 from pydantic import BaseModel, Field
 
+
 class FileItemModel(BaseModel):
     file_id: str
     file_name: str
     file_size: int
     content_type: str
     status: str = "pending"
+
 
 class TransferModel(BaseModel):
     transfer_id: str

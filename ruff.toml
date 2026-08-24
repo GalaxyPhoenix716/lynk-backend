@@ -1,0 +1,11 @@
+# Ruff configuration — lint + format for the Lynk backend.
+# Run:  python -m ruff check --fix .   &&   python -m ruff format .
+
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W"]
+
+[format]
+quote-style = "double"

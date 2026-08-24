@@ -5,6 +5,7 @@ Coturn `use-auth-secret` scheme (RFC-style REST API):
 - credential = base64(HMAC-SHA1(secret, username))
 The shared secret must NEVER appear in any API response.
 """
+
 import base64
 import hashlib
 import hmac
@@ -28,9 +29,7 @@ class TestGenerateTurnCredentials:
         assert creds["ttl"] == 600
 
     def test_username_embeds_absolute_expiry(self):
-        creds = generate_turn_credentials(
-            secret="s", session_id="abc", ttl_seconds=60, now=5000.0
-        )
+        creds = generate_turn_credentials(secret="s", session_id="abc", ttl_seconds=60, now=5000.0)
         assert creds["username"].startswith("5060:abc")
 
     def test_different_sessions_yield_different_credentials(self):

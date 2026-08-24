@@ -12,6 +12,7 @@ from app.models.transfer import TransferModel, FileItemModel
 from app.services.redis_service import RedisService
 from app.services.r2_service import R2Service
 
+
 class TransferService:
     def __init__(self, redis_service: RedisService, r2_service: R2Service) -> None:
         self.redis = redis_service
@@ -31,17 +32,21 @@ class TransferService:
         for f in files_input:
             size = f["file_size"]
             if size > settings.MAX_INDIVIDUAL_FILE_SIZE:
-                raise LimitExceededException(f"File '{f['file_name']}' exceeds individual size limit")
+                raise LimitExceededException(
+                    f"File '{f['file_name']}' exceeds individual size limit"
+                )
             total_size += size
 
             file_id = self._generate_id(8)
-            file_models.append(FileItemModel(
-                file_id=file_id,
-                file_name=f["file_name"],
-                file_size=size,
-                content_type=f["content_type"],
-                status="pending"
-            ))
+            file_models.append(
+                FileItemModel(
+                    file_id=file_id,
+                    file_name=f["file_name"],
+                    file_size=size,
+                    content_type=f["content_type"],
+                    status="pending",
+                )
+            )
 
         if total_size > settings.MAX_TOTAL_TRANSFER_SIZE:
             raise LimitExceededException("Total transfer size limit exceeded")
@@ -59,7 +64,10 @@ class TransferService:
                 continue
 
         if current_active_size + total_size > settings.MAX_TOTAL_R2_CAP_BYTES:
-            raise LimitExceededException("High server traffic. Active storage capacity limit reached. Please try again later.")
+            raise LimitExceededException(
+                "High server traffic. Active storage capacity limit "
+                "reached. Please try again later."
+            )
 
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=settings.TRANSFER_LIFETIME_SECONDS)
@@ -71,27 +79,29 @@ class TransferService:
             expires_at=expires_at.isoformat(),
             total_files=len(file_models),
             total_size=total_size,
-            files=file_models
+            files=file_models,
         )
 
         await self.redis.set_transfer(
-            transfer_id,
-            transfer.model_dump(),
-            settings.TRANSFER_LIFETIME_SECONDS
+            transfer_id, transfer.model_dump(), settings.TRANSFER_LIFETIME_SECONDS
         )
 
         expires_timestamp = int(expires_at.timestamp())
-        await client.zadd("lynk:active_transfers", {f"{transfer_id}:{total_size}": expires_timestamp})
+        await client.zadd(
+            "lynk:active_transfers", {f"{transfer_id}:{total_size}": expires_timestamp}
+        )
 
         upload_files = []
         for f in file_models:
             url = await self.r2.generate_upload_url(transfer_id, f.file_id, f.content_type)
-            upload_files.append({
-                "file_id": f.file_id,
-                "file_name": f.file_name,
-                "file_size": f.file_size,
-                "upload_url": url
-            })
+            upload_files.append(
+                {
+                    "file_id": f.file_id,
+                    "file_name": f.file_name,
+                    "file_size": f.file_size,
+                    "upload_url": url,
+                }
+            )
 
         return {
             "transfer_id": transfer_id,
@@ -99,7 +109,7 @@ class TransferService:
             "total_files": len(file_models),
             "total_size": total_size,
             "expires_in": settings.TRANSFER_LIFETIME_SECONDS,
-            "files": upload_files
+            "files": upload_files,
         }
 
     async def complete_file(self, transfer_id: str, file_id: str) -> dict:
@@ -113,7 +123,7 @@ class TransferService:
             raise InvalidInputException("File not found in transfer")
 
         try:
-            actual_size = await self.r2.verify_file_exists(transfer_id, file_id)
+            await self.r2.verify_file_exists(transfer_id, file_id)
             target_file.status = "uploaded"
         except FileNotFoundError:
             target_file.status = "failed"
@@ -127,7 +137,7 @@ class TransferService:
         return {
             "file_id": file_id,
             "status": target_file.status,
-            "transfer_status": transfer.status
+            "transfer_status": transfer.status,
         }
 
     async def get_transfer_metadata(self, transfer_id: str) -> dict:
@@ -136,7 +146,7 @@ class TransferService:
             raise TransferNotFoundException()
 
         transfer = TransferModel.model_validate(data)
-        
+
         client = await self.redis.get_client()
         key = self.redis._get_key(transfer_id)
         ttl = await client.ttl(key)
@@ -153,9 +163,10 @@ class TransferService:
                     "file_id": f.file_id,
                     "file_name": f.file_name,
                     "file_size": f.file_size,
-                    "content_type": f.content_type
-                } for f in transfer.files
-            ]
+                    "content_type": f.content_type,
+                }
+                for f in transfer.files
+            ],
         }
 
     async def extend_transfer(self, transfer_id: str) -> dict:
@@ -170,21 +181,19 @@ class TransferService:
         transfer.expires_at = new_expires_at.isoformat()
 
         await self.redis.extend_transfer(
-            transfer_id,
-            transfer.model_dump(),
-            settings.EXTENDED_TRANSFER_LIFETIME_SECONDS
+            transfer_id, transfer.model_dump(), settings.EXTENDED_TRANSFER_LIFETIME_SECONDS
         )
 
         client = await self.redis.get_client()
         await client.zadd(
             "lynk:active_transfers",
-            {f"{transfer_id}:{transfer.total_size}": int(new_expires_at.timestamp())}
+            {f"{transfer_id}:{transfer.total_size}": int(new_expires_at.timestamp())},
         )
 
         return {
             "transfer_id": transfer.transfer_id,
             "status": transfer.status,
-            "expires_in": settings.EXTENDED_TRANSFER_LIFETIME_SECONDS
+            "expires_in": settings.EXTENDED_TRANSFER_LIFETIME_SECONDS,
         }
 
     async def get_download_urls(self, transfer_id: str, file_ids: list[str] | None = None) -> dict:
@@ -204,12 +213,14 @@ class TransferService:
                 if f.status != "uploaded":
                     continue
                 url = await self.r2.generate_download_url(transfer_id, f.file_id, f.file_name)
-                download_files.append({
-                    "file_id": f.file_id,
-                    "file_name": f.file_name,
-                    "download_url": url,
-                    "expires_in": settings.DOWNLOAD_URL_LIFETIME_SECONDS
-                })
+                download_files.append(
+                    {
+                        "file_id": f.file_id,
+                        "file_name": f.file_name,
+                        "download_url": url,
+                        "expires_in": settings.DOWNLOAD_URL_LIFETIME_SECONDS,
+                    }
+                )
 
         return {"files": download_files}
 
@@ -220,9 +231,9 @@ class TransferService:
 
         transfer = TransferModel.model_validate(data)
         await self.redis.delete_transfer(transfer_id)
-        
+
         client = await self.redis.get_client()
         await client.zrem("lynk:active_transfers", f"{transfer_id}:{transfer.total_size}")
-        
+
         file_ids = [f.file_id for f in transfer.files]
         await self.r2.delete_objects(transfer_id, file_ids)

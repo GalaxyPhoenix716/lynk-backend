@@ -5,6 +5,7 @@ Contract (Phases.md): the server is a dumb relay for `offer`, `answer` and
 buffered per room and replayed to a peer that joins late, so the sender may
 signal its offer before the receiver has connected.
 """
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -58,10 +59,12 @@ class TestTwoPartyRelay:
     def test_replay_contains_buffered_history_in_order(self, client):
         with client.websocket_connect("/ws/signaling/relay-4") as a:
             a.send_json({"type": "offer", "sdp": "first"})
-            a.send_json({
-                "type": "candidate",
-                "candidate": {"candidate": "cand-1", "sdpMid": "0"},
-            })
+            a.send_json(
+                {
+                    "type": "candidate",
+                    "candidate": {"candidate": "cand-1", "sdpMid": "0"},
+                }
+            )
             with client.websocket_connect("/ws/signaling/relay-4") as b:
                 assert b.receive_json() == {"type": "offer", "sdp": "first"}
                 assert b.receive_json() == {

@@ -10,6 +10,7 @@ from app.core.exceptions import register_exception_handlers
 from app.core.config import settings
 from app.services.redis_service import redis_service
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # WebRTC signaling rooms are process-local (see app/api/signaling.py).
@@ -26,11 +27,12 @@ async def lifespan(app: FastAPI):
     yield
     await redis_service.close_pool()
 
+
 app = FastAPI(
     title="Lynk API",
     description="Cross-device file transfer backend",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -46,6 +48,7 @@ register_exception_handlers(app)
 app.include_router(transfers_router, prefix="/api/v1")
 app.include_router(receiver_router, prefix="/api/v1")
 app.include_router(signaling_router, prefix="/ws", tags=["signaling"])
+
 
 @app.get("/")
 async def root():

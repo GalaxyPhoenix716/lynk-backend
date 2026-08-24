@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+
 class ReceiverSessionModel(BaseModel):
     session_id: str
     status: str = "waiting"

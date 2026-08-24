@@ -7,6 +7,7 @@ from app.core.exceptions import ServiceUnavailableException, TransferNotFoundExc
 
 logger = logging.getLogger(__name__)
 
+
 class RedisService:
     def __init__(self) -> None:
         self.pool: aioredis.ConnectionPool | None = None
@@ -15,9 +16,7 @@ class RedisService:
         """Initializes the connection pool. Called during app startup."""
         try:
             self.pool = aioredis.ConnectionPool.from_url(
-                settings.REDIS_URL,
-                decode_responses=True,
-                encoding="utf-8"
+                settings.REDIS_URL, decode_responses=True, encoding="utf-8"
             )
             logger.info("Redis connection pool initialized.")
         except Exception as e:
@@ -67,11 +66,11 @@ class RedisService:
         try:
             # 1. Read current TTL to prevent extending the lifetime
             ttl = await client.ttl(key)
-            
+
             # Redis TTL returns -2 if key does not exist
             if ttl == -2:
                 raise TransferNotFoundException()
-            
+
             # Handle edge cases (no expiry key -1 or expired keys)
             if ttl <= 0:
                 if ttl == -1:
@@ -176,5 +175,6 @@ class RedisService:
             await self.pool.disconnect()
             logger.info("Redis connection pool closed.")
             self.pool = None
+
 
 redis_service = RedisService()
