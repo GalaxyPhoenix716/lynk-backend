@@ -1,12 +1,12 @@
 """WebSocket signaling relay for WebRTC P2P sessions.
 
-⚠️ SINGLE-PROCESS CONSTRAINT — read before scaling.
+ SINGLE-PROCESS CONSTRAINT — read before scaling.
 
 Room state (`rooms` below) is in-memory and process-local by design. This is
 correct ONLY while exactly **one** Uvicorn worker serves the app:
 
 - Sender and receiver MUST land on the same worker or they get separate,
-  disconnected rooms → signaling silently never completes.
+  disconnected rooms  signaling silently never completes.
 - State is lost on restart. Harmless for P2P (peers reconnect), but do not
   treat rooms as durable.
 
