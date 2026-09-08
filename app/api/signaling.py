@@ -1,6 +1,6 @@
 """WebSocket signaling relay for WebRTC P2P sessions.
 
- SINGLE-PROCESS CONSTRAINT — read before scaling.
+ SINGLE-PROCESS CONSTRAINT -- read before scaling.
 
 Room state (`rooms` below) is in-memory and process-local by design. This is
 correct ONLY while exactly **one** Uvicorn worker serves the app:
@@ -12,48 +12,162 @@ correct ONLY while exactly **one** Uvicorn worker serves the app:
 
 Enforcement:
 - The Docker image runs `uvicorn ... --port 8000` with NO --workers flag
-  (= 1 worker) — keep it that way until Redis-backed fan-out lands.
+  (= 1 worker) -- keep it that way until Redis-backed fan-out lands.
 - `main.py` logs a loud warning at startup if WEB_CONCURRENCY > 1.
 
-Scaling path (Phase 5): move history to a Redis key with TTL ≈ session
-lifetime and fan-out via per-session Redis pub/sub channels.
+Hardening (audit ISSUES 04-07):
+- Optional session validation: set `set_session_validator(fn)` (wired in
+  main.py when SIGNALING_VALIDATE_SESSION=true) -- unknown ids are refused.
+- Rooms are capped at two members; a third connection gets an error frame
+  and is closed.
+- Fan-out wraps every send: a dying socket is pruned instead of killing the
+  healthy peer's loop.
+- Rooms idle longer than SIGNALING_IDLE_EVICTION_SECONDS are evicted by a
+  background sweeper started from main.py's lifespan.
+
+Roles: clients may declare `"role": "sender"|"receiver"` either via the
+`?role=` query parameter or a first-frame hello (`{"type":"hello", ...}`).
+History replay skips frames authored by the same declared role, so a
+reconnecting peer never receives its own offer back.
 """
 
+import asyncio
 import json
+import time
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter(tags=["signaling"])
 
-# session_id -> room state. The server is a *dumb relay*: it forwards every
-# valid JSON object to the other peers and buffers a bounded history so a
-# peer that joins late (receiver after sender) still receives the offer.
 rooms: dict[str, dict[str, Any]] = {}
 
 _HISTORY_CAP = 100
+_MAX_MEMBERS = 2
+DEFAULT_IDLE_EVICTION_SECONDS = 60.0
+
+_session_validator: Callable[[str], Awaitable[bool]] | None = None
+
+
+def set_session_validator(fn: Callable[[str], Awaitable[bool]] | None) -> None:
+    """Register an async validator; returning False refuses the connection."""
+    global _session_validator
+    _session_validator = fn
 
 
 def _get_room(session_id: str) -> dict[str, Any]:
     if session_id not in rooms:
-        rooms[session_id] = {"members": [], "history": []}
+        rooms[session_id] = {
+            "members": [],  # [{ws, role}]
+            "history": [],  # [(role, raw_frame)]
+            "last_activity": time.monotonic(),
+        }
     return rooms[session_id]
 
 
-@router.websocket("/signaling/{session_id}")
-async def signaling_ws(websocket: WebSocket, session_id: str):
-    await websocket.accept()
-    room = _get_room(session_id)
+def _touch(room: dict[str, Any]) -> None:
+    room["last_activity"] = time.monotonic()
 
-    # Replay buffered history to the late joiner (sender may have signaled
-    # before the receiver connected).
-    for frame in list(room["history"]):
-        await websocket.send_text(frame)
-    room["members"].append(websocket)
+
+def evict_idle_rooms(
+    max_idle_seconds: float = DEFAULT_IDLE_EVICTION_SECONDS,
+    now: float | None = None,
+) -> list[str]:
+    """Drop rooms idle beyond the threshold.
+
+    Returns the evicted session ids. Injected `now` keeps it testable.
+    History is kept for late joiners until the idle window expires.
+    """
+    current = time.monotonic() if now is None else now
+    evicted = []
+    for sid in list(rooms):
+        room = rooms[sid]
+        idle_for = current - room["last_activity"]
+        if idle_for >= max_idle_seconds:
+            rooms.pop(sid, None)
+            evicted.append(sid)
+    return evicted
+
+
+def _prune_member(room: dict[str, Any], ws: WebSocket) -> None:
+    room["members"] = [m for m in room["members"] if m["ws"] is not ws]
+
+
+async def _safe_send(member: dict[str, Any], raw: str) -> bool:
+    try:
+        await member["ws"].send_text(raw)
+        return True
+    except Exception:
+        return False
+
+
+def _should_replay(entry_role: str | None, joiner_role: str | None) -> bool:
+    """Replay skips frames authored by the joiner's own declared role."""
+    if joiner_role is None or entry_role is None:
+        return True
+    return entry_role != joiner_role
+
+
+_idle_sweeper_task: asyncio.Task | None = None
+
+
+def start_idle_sweeper(
+    interval_seconds: float = 30.0,
+    max_idle_seconds: float = DEFAULT_IDLE_EVICTION_SECONDS,
+) -> None:
+    global _idle_sweeper_task  # noqa: F823 - module-level task handle
+
+    async def _loop() -> None:
+        while True:
+            await asyncio.sleep(interval_seconds)
+            try:
+                evict_idle_rooms(max_idle_seconds=max_idle_seconds)
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+    stop_idle_sweeper()
+    _idle_sweeper_task = asyncio.create_task(_loop())
+
+
+def stop_idle_sweeper() -> None:
+    global _idle_sweeper_task
+    if _idle_sweeper_task is not None and not _idle_sweeper_task.done():
+        _idle_sweeper_task.cancel()
+    _idle_sweeper_task = None
+
+
+@router.websocket("/signaling/{session_id}")
+async def signaling_ws(websocket: WebSocket, session_id: str, role: str | None = None) -> None:
+    await websocket.accept()
+
+    if _session_validator is not None and not await _session_validator(session_id):
+        await websocket.send_text(json.dumps({"type": "error", "msg": "unknown session"}))
+        await websocket.close()
+        return
+
+    room = _get_room(session_id)
+    if len(room["members"]) >= _MAX_MEMBERS:
+        await websocket.send_text(json.dumps({"type": "error", "msg": "room full"}))
+        await websocket.close()
+        return
+
+    # Clean up stale history from a previous peer with the same role, so
+    # reconnecting senders don't leave ghost offers for future receivers.
+    if role is not None:
+        room["history"] = [h for h in room["history"] if h[0] != role]
+    # Replay buffered history authored by the *opposite* role only, so a
+    # reconnecting peer never receives its own offer back (ISSUE-05).
+    for entry_role, raw in list(room["history"]):
+        if _should_replay(entry_role, role):
+            await websocket.send_text(raw)
+    room["members"].append({"ws": websocket, "role": role})
+    _touch(room)
 
     try:
         while True:
             raw = await websocket.receive_text()
+            _touch(room)
             try:
                 decoded = json.loads(raw)
                 if not isinstance(decoded, dict):
@@ -62,15 +176,29 @@ async def signaling_ws(websocket: WebSocket, session_id: str):
                 await websocket.send_text(json.dumps({"type": "error", "msg": "invalid JSON"}))
                 continue
 
-            # Buffer once, then fan out to everyone else.
-            room["history"].append(raw)
+            # In-band role declaration (ISSUE-05): stored, never relayed.
+            if decoded.get("type") == "hello":
+                declared = decoded.get("role")
+                for m in room["members"]:
+                    if m["ws"] is websocket and declared in ("sender", "receiver"):
+                        m["role"] = declared
+                        break
+                continue
+
+            room["history"].append((role, raw))
             if len(room["history"]) > _HISTORY_CAP:
                 del room["history"][: len(room["history"]) - _HISTORY_CAP]
-            for peer in list(room["members"]):
-                if peer is not websocket:
-                    await peer.send_text(raw)
+
+            dead: list[Any] = []
+            for m in list(room["members"]):
+                if m["ws"] is websocket:
+                    continue
+                ok = await _safe_send(m, raw)
+                if not ok:
+                    dead.append(m["ws"])
+            for bad in dead:
+                _prune_member(room, bad)
 
     except WebSocketDisconnect:
-        room["members"] = [m for m in room["members"] if m is not websocket]
-        if not room["members"]:
-            rooms.pop(session_id, None)
+        _prune_member(room, websocket)
+        _touch(room)
